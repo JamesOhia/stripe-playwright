@@ -3,7 +3,7 @@
 End-to-end automated tests for a realistic Stripe Sandbox payment processing workflow, built with Playwright + JavaScript, runnable in GitHub Actions on every push or PR, with Allure reports published to GitHub Pages and uploaded as downloadable artifacts.
 
 
-## What this suite covers
+## What this suite covers t
 
 | Layer | Scope |
 |-------|-------|
