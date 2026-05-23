@@ -1,0 +1,12 @@
+node_modules
+.git
+.github
+allure-report
+allure-results
+playwright-report
+test-results
+.env
+.env.*
+auth/*.json
+.DS_Store
+npm-debug.log
