@@ -7,6 +7,7 @@ playwright-report
 test-results
 .env
 .env.*
-auth/*.json
+auth/
+.auth/
 .DS_Store
 npm-debug.log

@@ -1,111 +1,142 @@
-# name: Playwright E2E — Stripe Sandbox
+name: Playwright E2E — Stripe Sandbox
 
-# on:
-#   push:
-#     branches: [main]
-#   pull_request:
-#     branches: [main]
-#   workflow_dispatch:
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
 
-# permissions:
-#   contents: read
-#   pages: write
-#   id-token: write
+permissions:
+  contents: read
+  pages: write
+  id-token: write
 
-# concurrency:
-#   group: pages-${{ github.ref }}
-#   cancel-in-progress: false
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
 
-# jobs:
-#   test:
-#     name: Run Playwright tests
-#     runs-on: ubuntu-latest
-#     timeout-minutes: 30
+jobs:
+  # ────────────────────────────────────────────────────────────────────────────
+  #  Job 1 — Build the Docker image and run all Playwright tests inside it.
+  #           Artifacts (allure-results, traces) are extracted via volume mounts.
+  # ────────────────────────────────────────────────────────────────────────────
+  test:
+    name: Build image & run Playwright tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
 
-#     steps:
-#       - name: Checkout repository
-#         uses: actions/checkout@v4
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-#       - name: Set up Node.js
-#         uses: actions/setup-node@v4
-#         with:
-#           node-version: 20
-#           cache: npm
+      # BuildKit enables layer caching, parallel stages, and better build output.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-#       - name: Install dependencies
-#         run: npm ci
+      # Build the image and store layers in the GitHub Actions cache.
+      # On subsequent runs only changed layers are rebuilt — much faster.
+      - name: Build Docker image (with GHA layer cache)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false   # we only need the image locally for this job
+          load: true    # load the built image into the local Docker daemon
+          tags: stripe-playwright:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-#       - name: Install Playwright browsers
-#         run: npx playwright install --with-deps chromium
+      # Restore the Allure trend history so reports show pass/fail trends over time.
+      - name: Restore Allure history cache
+        uses: actions/cache@v4
+        with:
+          path: allure-history
+          key: allure-history-${{ github.run_id }}
+          restore-keys: |
+            allure-history-
 
-#       - name: Cache Allure history
-#         uses: actions/cache@v4
-#         with:
-#           path: allure-history
-#           key: allure-history-${{ github.run_id }}
-#           restore-keys: |
-#             allure-history-
+      # Create host-side output directories and seed historical Allure data.
+      - name: Prepare output directories & seed Allure history
+        run: |
+          mkdir -p allure-results test-results playwright-report
+          if [ -d allure-history ]; then
+            cp -R allure-history/history allure-results/history || true
+          fi
 
-#       - name: Restore Allure history into report folder
-#         run: |
-#           mkdir -p allure-results
-#           if [ -d allure-history ]; then
-#             cp -R allure-history/history allure-results/history || true
-#           fi
+      # Run the full test suite inside the container.
+      # Secrets are passed as env vars (not inlined in the command) so they
+      # are never echoed in the workflow log.
+      # Volume mounts let the host access test outputs after the container exits.
+      - name: Run Playwright tests in Docker container
+        env:
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUBLISHABLE_KEY }}
+          STRIPE_DASHBOARD_EMAIL: ${{ secrets.STRIPE_DASHBOARD_EMAIL }}
+          STRIPE_DASHBOARD_PASSWORD: ${{ secrets.STRIPE_DASHBOARD_PASSWORD }}
+        run: |
+          docker run --rm \
+            --user root \
+            -e STRIPE_SECRET_KEY \
+            -e STRIPE_PUBLISHABLE_KEY \
+            -e STRIPE_DASHBOARD_EMAIL \
+            -e STRIPE_DASHBOARD_PASSWORD \
+            -e CI=true \
+            -v "${{ github.workspace }}/allure-results:/app/allure-results" \
+            -v "${{ github.workspace }}/test-results:/app/test-results" \
+            stripe-playwright:${{ github.sha }}
+        continue-on-error: true   # always upload the report even when tests fail
 
-#       - name: Run Playwright tests
-#         env:
-#           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
-#           STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUBLISHABLE_KEY }}
-#           STRIPE_DASHBOARD_EMAIL: ${{ secrets.STRIPE_DASHBOARD_EMAIL }}
-#           STRIPE_DASHBOARD_PASSWORD: ${{ secrets.STRIPE_DASHBOARD_PASSWORD }}
-#           CI: 'true'
-#         run: npx playwright test
-#         continue-on-error: true
+      # Generate the Allure HTML report on the host (not inside Docker) so the
+      # resulting files are immediately available for GitHub Pages upload.
+      - name: Install Allure CLI
+        run: npm i -g allure-commandline
 
-#       - name: Install Allure CLI
-#         run: npm i -g allure-commandline --save-dev
+      - name: Generate Allure HTML report
+        run: allure generate ./allure-results --clean -o ./allure-report
 
-#       - name: Generate Allure HTML report
-#         run: allure generate ./allure-results --clean -o ./allure-report
+      # Persist the Allure history folder so the next run can show trend data.
+      - name: Save Allure history for next run
+        run: |
+          rm -rf allure-history
+          mkdir -p allure-history
+          cp -R allure-report/history allure-history/history || true
 
-#       - name: Persist Allure history for next run
-#         run: |
-#           rm -rf allure-history
-#           mkdir -p allure-history
-#           cp -R allure-report/history allure-history/history || true
+      - name: Upload Allure report (artifact)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: allure-report
+          path: allure-report
+          retention-days: 30
 
-#       - name: Upload Allure report (artifact)
-#         uses: actions/upload-artifact@v4
-#         if: always()
-#         with:
-#           name: allure-report
-#           path: allure-report
-#           retention-days: 30
+      - name: Upload Playwright traces (artifact)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-traces
+          path: test-results
+          retention-days: 14
 
-#       - name: Upload Playwright traces (artifact)
-#         uses: actions/upload-artifact@v4
-#         if: always()
-#         with:
-#           name: playwright-traces
-#           path: test-results
-#           retention-days: 14
+      # Only upload the Pages artifact on main — we don't want every PR to
+      # overwrite the public report.
+      - name: Upload GitHub Pages artifact
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: allure-report
 
-#       - name: Upload Pages artifact
-#         if: github.ref == 'refs/heads/main'
-#         uses: actions/upload-pages-artifact@v3
-#         with:
-#           path: allure-report
-
-#   deploy-pages:
-#     name: Deploy Allure report to GitHub Pages
-#     if: github.ref == 'refs/heads/main'
-#     needs: test
-#     runs-on: ubuntu-latest
-#     environment:
-#       name: github-pages
-#       url: ${{ steps.deployment.outputs.page_url }}
-#     steps:
-#       - name: Deploy to GitHub Pages
-#         id: deployment
-#         uses: actions/deploy-pages@v4
+  # ────────────────────────────────────────────────────────────────────────────
+  #  Job 2 — Publish the Allure report to GitHub Pages (main branch only).
+  # ────────────────────────────────────────────────────────────────────────────
+  deploy-pages:
+    name: Deploy Allure report to GitHub Pages
+    if: github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

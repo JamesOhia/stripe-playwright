@@ -1,20 +1,28 @@
-#Use official Playwright image with browsers already installed
-FROM mcr.microsoft.com/playwright:v1.30.0-focal
+# ──────────────────────────────────────────────────────────────────────────────
+#  Stripe Payment QA — Playwright test runner
+#  Base: Node 20 LTS on Debian 12 (Bookworm Slim)
+# ──────────────────────────────────────────────────────────────────────────────
+FROM node:20-bookworm-slim
 
-#Set working directory
 WORKDIR /app
 
-#Copy package.json and package-lock.json to install dependencies
+# ── 1. Install Node dependencies first (layer is cached until package.json changes)
 COPY package.json package-lock.json ./
+RUN npm ci
 
-#Install dependencies
-RUN npm install
+# ── 2. Install Chromium browser + every OS-level system dependency it needs.
+#       --with-deps runs apt-get automatically so we don't have to list packages.
+RUN npx playwright install --with-deps chromium
 
-#Copy the rest of the application code
+# ── 3. Copy application source code (changes frequently; kept in its own layer)
 COPY . .
 
-#Ensure Report Folders exist
-RUN mkidir -p allure-results allure-report test-results playwright-report
+# ── 4. Pre-create output directories so volume mounts work without permission errors
+RUN mkdir -p allure-results allure-report test-results playwright-report
 
-#Set the command to run your tests (adjust as needed)
+# ── 5. Healthcheck — verifies the Node runtime is alive inside the container.
+#       Useful when the container is used as a service or behind a scheduler.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD node --version || exit 1
+
 CMD ["npm", "test"]
