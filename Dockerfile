@@ -2,7 +2,7 @@
 #  Stripe Payment QA — Playwright test runner
 #  Base: Node 20 LTS on Debian 12 (Bookworm Slim)
 # ──────────────────────────────────────────────────────────────────────────────
-FROM node:20-bookworm-slim
+FROM node:26.2.0-bookworm-slim
 
 WORKDIR /app
 
