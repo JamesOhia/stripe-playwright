@@ -612,7 +612,7 @@ The Snyk + Docker Scout combination covers dependencies and images well, but two
 
 Gitleaks will fail the job (exit code 1) if it finds a committed secret — which is the correct behaviour. You want the build to break rather than let a leaked key reach `main`.
 
-#### 2. npm audit (built-in, zero config, no token needed)
+#### 2. npm audit (built-in, zero config, no token needed) 
 
 ```yaml
 - name: npm audit (critical and high only)
